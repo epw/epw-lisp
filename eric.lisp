@@ -62,6 +62,11 @@
 ;;	   :file-magic
 	   :name-of-weekday
 	   :name-of-month
+	   :queue
+	   :make-queue-from-list
+	   :make-queue
+	   :enqueue
+	   :dequeue
 	   :ncr
 	   :npr
 	   :fac))
@@ -581,6 +586,43 @@ structure would have."
   (let ((months '("Jan" "Feb" "Mar" "Apr" "May" "Jun" "Jul" "Aug" "Sept"
 		  "Oct" "Nov" "Dec")))
     (nth (1- month) months)))
+
+(defclass queue ()
+  (list tail)
+  (:documentation "A class for a FIFO queue of CONS cells"))
+
+(defun make-queue-from-list (list)
+  "Create new QUEUE instance from a list. LIST may be NIL"
+  (assign queue (make-instance 'queue)
+    (setf (slot-value queue 'list) list
+	  (slot-value queue 'tail) (last list))))
+
+(defun make-queue (&rest objs)
+  "Create new QUEUE instance from variable number of arguments, which may be 0."
+  (make-queue-from-list objs))
+
+(defun enqueue (obj queue)
+  "Append OBJ to end of QUEUE"
+  (unless (eq (type-of queue) 'queue)
+    (error 'type-error :datum queue :expected-type 'queue))
+  (assign cell (cons obj nil)
+    (if (null (slot-value queue 'tail))
+	(setf (slot-value queue 'tail) cell)
+	(setf (cdr (slot-value queue 'tail)) cell
+	      (slot-value queue 'tail) cell))
+    (if (null (slot-value queue 'list))
+	(setf (slot-value queue 'list) cell))))
+
+(defun dequeue (queue)
+  "Remove and return next item from QUEUE"
+  (unless (eq (type-of queue) 'queue)
+    (error 'type-error :datum queue :expected-type 'queue))
+  (assign obj (pop (slot-value queue 'list))
+    (if (null (slot-value queue 'list))
+	(setf (slot-value queue 'tail) nil))))
+
+(defmethod len ((sequence queue))
+  (length (slot-value sequence 'list)))
 
 (defun ncr (n k)
   (cond ((= k 0) 1)
