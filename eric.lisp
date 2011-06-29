@@ -6,13 +6,16 @@
 ;; programs
 
 (eval-when (:compile-toplevel)
-  (dolist (pkg '(:cl-ppcre :split-sequence :drakma :asdf-install))
-    (asdf:oos 'asdf:load-op pkg)))
+  (dolist (pkg '(:cl-ppcre :split-sequence :drakma :usocket))
+    (handler-case (asdf:oos 'asdf:load-op pkg)
+      (asdf:missing-component (c) (declare (ignore c)) nil))))
 
 (defpackage :eric
   (:use :cl)
   (:export :include
-	   :install
+;	   :install
+	   :def-if-pkg
+	   :not-found
 	   :assign
 	   :make-keyword
 	   :symbol-concat
@@ -62,16 +65,25 @@
 ;;	   :file-magic
 	   :name-of-weekday
 	   :name-of-month
-	   :queue
-	   :make-queue-from-list
-	   :make-queue
-	   :enqueue
-	   :dequeue
+	   :socket-format
+	   :socket-read-line
+	   :socket-read-all
 	   :ncr
 	   :npr
 	   :fac))
 	     
 (in-package :eric)
+
+(defun not-found (pkg)
+  (error 'simple-error :format-control "Necessary package ~a not found."
+	 :format-arguments (list pkg)))
+
+(eval-when (:compile-toplevel)
+  (defmacro def-if-pkg (package-designator definition)
+    (if (find-package package-designator) definition
+	`(,(first definition) ,(second definition) ,(third definition)
+	   ,(if (stringp (fourth definition)) (fourth definition) "")
+	   (not-found ,package-designator)))))
 
 (defun include (&rest packages)
   "Convenience function for (asdf:oos 'asdf:load-op package)"
@@ -83,23 +95,23 @@
 			(invoke-restart 'muffle-warning))))
 	  (asdf:oos 'asdf:load-op pkg)))))
 
-(defun install (&rest packages)
-  "Convenience function to download and install package with asdf-install and skip GPG check."
-  (include :asdf-install)
-  (setf asdf-install:*locations* (list (list #P"/home/eric/.sbcl/site/"
-					     #P"/home/eric/.sbcl/systems/"
-					     "Personal installation")))
-  (dolist (pkg packages)
-    (handler-case
-	(handler-bind ((asdf-install::key-not-found
-			(lambda (c)
-			  (declare (ignore c))
-			  (invoke-restart 'asdf-install::skip-gpg-check))))
-	  (asdf-install:install pkg))
-      (asdf-install::download-error (e)
-	(declare (ignore e))
-	(format t "Could not download ~a~%~%" pkg)
-	nil))))
+;(defun install (&rest packages)
+;  "Convenience function to download and install package with asdf-install and skip GPG check."
+;  (include :asdf-install)
+;  (setf asdf-install:*locations* (list (list #P"/home/eric/.sbcl/site/"
+;					     #P"/home/eric/.sbcl/systems/"
+;					     "Personal installation")))
+;  (dolist (pkg packages)
+;    (handler-case
+;	(handler-bind ((asdf-install::key-not-found
+;			(lambda (c)
+;			  (declare (ignore c))
+;			  (invoke-restart 'asdf-install::skip-gpg-check))))
+;	  (asdf-install:install pkg))
+;      (asdf-install::download-error (e)
+;	(declare (ignore e))
+;	(format t "Could not download ~a~%~%" pkg)
+;	nil))))
 
 (defmacro assign (var form &body bdoy)
   "Syntactic sugar for let using only one variable, and returning it"
@@ -328,22 +340,26 @@ cases to handle many conversions to strings."
 ;		  (symbol-function (symbol-concat fname '-old))))))
 ;    (style-warning () nil)))
 
-(defun regex-match (regex target-string &key (start 0) end)
-  (if end
-      (ppcre:scan-to-strings regex target-string :start start :end end)
-      (ppcre:scan-to-strings regex target-string :start start)))
 
-(defun strsub (original old new)
-  "CL-PPCRE wrapper for regex-replace-all. Takes original string, regular
+(def-if-pkg :ppcre
+    (defun regex-match (regex target-string &key (start 0) end)
+      (if end
+	  (ppcre:scan-to-strings regex target-string :start start :end end)
+	  (ppcre:scan-to-strings regex target-string :start start))))
+  
+(def-if-pkg :ppcre
+    (defun strsub (original old new)
+      "CL-PPCRE wrapper for regex-replace-all. Takes original string, regular
 expression, and replacement string."
-  (ppcre:regex-replace-all old original new))
+      (ppcre:regex-replace-all old original new)))
 
-(defun strsub-list (original &rest pairs)
-  "Executes strsub on each pair (just two arguments) of old and new strings."
-  (loop for n from 0 to (2/ (1- (length pairs))) do
-       (setf original (strsub original (nth (2* n) pairs)
-			      (nth (1+ (2* n)) pairs))))
-  original)
+(def-if-pkg :ppcre
+    (defun strsub-list (original &rest pairs)
+      "Executes strsub on each pair (just two arguments) of old and new strings."
+      (loop for n from 0 to (2/ (1- (length pairs))) do
+	   (setf original (strsub original (nth (2* n) pairs)
+				  (nth (1+ (2* n)) pairs))))
+      original))
 
 (defun between (number left-bound right-bound &optional (inclusive t))
   "Check whether number is between left-bound and right-bound (optionally
@@ -550,24 +566,25 @@ structure would have."
   ((status :initarg :status :reader status)
    (reason :initarg :reason :reader reason)))
 
-(defun get-internet-file (uri)
-  "Return a file from the Internet, designated by uri, and cache it. If the cached file already exists, do not perform an HTTP lookup, and just return the filename of the cached version."
-  (let ((filename (subseq uri (1+ (position #\/ uri :from-end t)))))
-    (if (string= filename "") (setf filename "index.html"))
-    (if (not (probe-file filename))
-	(multiple-value-bind (data status headers response-uri stream
-				   needs-close-p reason)
-	    (drakma:http-request uri)
-	  (declare (ignore headers response-uri stream needs-close-p))
-	  (if (= status 200)
-	      (eric:fopen (f filename :w
-			     :element-type (typecase data
-					     (string 'base-char)
-					     (vector '(unsigned-byte
-						       8))))
-		(write-sequence data f))
-	      (error 'http-error :status status :reason reason))))
-    filename))
+(def-if-pkg :drakma
+    (defun get-internet-file (uri)
+      "Return a file from the Internet, designated by uri, and cache it. If the cached file already exists, do not perform an HTTP lookup, and just return the filename of the cached version."
+      (let ((filename (subseq uri (1+ (position #\/ uri :from-end t)))))
+	(if (string= filename "") (setf filename "index.html"))
+	(if (not (probe-file filename))
+	    (multiple-value-bind (data status headers response-uri stream
+				       needs-close-p reason)
+		(drakma:http-request uri)
+	      (declare (ignore headers response-uri stream needs-close-p))
+	      (if (= status 200)
+		  (eric:fopen (f filename :w
+				 :element-type (typecase data
+						 (string 'base-char)
+						 (vector '(unsigned-byte
+							   8))))
+		    (write-sequence data f))
+		  (error 'http-error :status status :reason reason))))
+	filename)))
 
 ;; (defun file-magic (filespec)
 ;;   (let ((mime
@@ -587,42 +604,24 @@ structure would have."
 		  "Oct" "Nov" "Dec")))
     (nth (1- month) months)))
 
-(defclass queue ()
-  (list tail)
-  (:documentation "A class for a FIFO queue of CONS cells"))
+(def-if-pkg :usocket
+    (defun socket-format (socket control-string &rest format-arguments)
+      (apply #'format (cons (usocket:socket-stream socket)
+			      (cons control-string format-arguments)))
+      (force-output (usocket:socket-stream socket))))
 
-(defun make-queue-from-list (list)
-  "Create new QUEUE instance from a list. LIST may be NIL"
-  (assign queue (make-instance 'queue)
-    (setf (slot-value queue 'list) list
-	  (slot-value queue 'tail) (last list))))
+(def-if-pkg :usocket
+    (defun socket-read-line (socket)
+      (read-line (usocket:socket-stream socket) nil)))
 
-(defun make-queue (&rest objs)
-  "Create new QUEUE instance from variable number of arguments, which may be 0."
-  (make-queue-from-list objs))
-
-(defun enqueue (obj queue)
-  "Append OBJ to end of QUEUE"
-  (unless (eq (type-of queue) 'queue)
-    (error 'type-error :datum queue :expected-type 'queue))
-  (assign cell (cons obj nil)
-    (if (null (slot-value queue 'tail))
-	(setf (slot-value queue 'tail) cell)
-	(setf (cdr (slot-value queue 'tail)) cell
-	      (slot-value queue 'tail) cell))
-    (if (null (slot-value queue 'list))
-	(setf (slot-value queue 'list) cell))))
-
-(defun dequeue (queue)
-  "Remove and return next item from QUEUE"
-  (unless (eq (type-of queue) 'queue)
-    (error 'type-error :datum queue :expected-type 'queue))
-  (assign obj (pop (slot-value queue 'list))
-    (if (null (slot-value queue 'list))
-	(setf (slot-value queue 'tail) nil))))
-
-(defmethod len ((sequence queue))
-  (length (slot-value sequence 'list)))
+(def-if-pkg :usocket
+    (defun socket-read-all (socket)
+      (let ((out (make-string-output-stream)))
+	(do ((line
+	      (socket-read-line socket) (socket-read-line socket)))
+	    ((not line))
+	  (format out "~A" line))
+	(get-output-stream-string out))))
 
 (defun ncr (n k)
   (cond ((= k 0) 1)
