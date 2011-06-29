@@ -12,4 +12,4 @@
   :author "Eric Willisson"
   :description "Library of useful functions"
   :components ((:file "eric"))
-  :depends-on (cl-ppcre split-sequence drakma asdf-install))
+  :depends-on (cl-ppcre split-sequence drakma))
