@@ -238,13 +238,17 @@ Does not yet work."
 
 (defun read-in-file (filespec)
   "Convenience function for (fopen (f filespec) (read-stream f))"
-  (fopen (file filespec :r :if-does-not-exist :error)
-    (read-stream file)))
+  (fopen (file filespec :r)
+    (if file
+	(read-stream file)
+	nil)))
 
 (defun read-from-file (filespec)
   "Convenience function for (fopen (f filespec) (read f))"
   (fopen (file filespec :r)
-    (read file)))
+    (if file
+	(read file)
+	nil)))
 
 (defun read-from-file-closure (filespec)
   "Create a closure which contains a file object specified by FILESPEC, and
