@@ -68,6 +68,8 @@
 	   :socket-format
 	   :socket-read-line
 	   :socket-read-all
+	   :incomplete-code-condition
+	   :ellipsis-reader
 	   :ncr
 	   :npr
 	   :fac))
@@ -626,6 +628,19 @@ structure would have."
 	    ((not line))
 	  (format out "~A" line))
 	(get-output-stream-string out))))
+
+(define-condition incomplete-code-condition (error)
+  ())
+
+(defun ellipsis-reader (stream subchar arg)
+  (declare (ignore subchar arg))
+  (if (and (char= (read-char stream) #\.)
+	   (char= (read-char stream) #\.))
+      `(cerror "Continue anyway" 'incomplete-code-condition)
+      (error 'sb-int:simple-reader-error :stream stream
+	     :format-control "not enough dots")))
+
+(set-dispatch-macro-character #\# #\. #'ellipsis-reader)
 
 (defun ncr (n k)
   (cond ((= k 0) 1)
